@@ -1,0 +1,520 @@
+#!/bin/bash
+##############################################################################
+# This file are path of the ALBackup system.
+#
+# Copyright(c) 2003 John Mrck Hansen
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software Foundation,
+# Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+#
+##############################################################################
+
+STORE_DATE_FORMAT='%Y%m%d-%H%M%S'
+
+CONF_DIR="/etc/albackup"
+#CONF_DIR="."
+CONF_FILE="$CONF_DIR/config"
+ALERR=""
+ALINFO=""
+TONULL="/dev/null"
+MAJOR_VERSION="0"
+MINOR_VERSION="5"
+MICRO_VERSION="0"
+VERSION="$MAJOR_VERSION.$MINOR_VERSION.$MICRO_VERSION"
+
+E_PARAM_NOT_SET=1       # Parameter not set etc.
+E_FILE_NOT_FOUND=2      # File or directory do not exist.
+E_CREATE_DIR=3          # Can't create directory.
+E_CREATE_FILE=4         # Can't create file.
+E_CONF_DIR_NOT_EXIST=5  # Config dir do not exist.
+
+L_NORMAL=1
+L_EXTENDED=2
+L_EXTREAM=3
+L_INSANE=4
+
+DAY=$(date +%d)
+DAYOFWEEK=$(date +%w)
+DAYOFYEAR=$(date +%j)
+WEEK=$(date +%W)
+MONTH=$(date +%m)
+YEAR=$(date +%Y)
+
+EVENDAY=$(expr $DAY + 1 % 2)
+EVENWEEK=$(expr $WEEK + 1 % 2)
+EVENMONTH=$(expr $MONTH + 1 % 2)
+
+
+##############################################################################
+function ExitProg()
+{
+    echo
+    echo -e "\t*** Exiting backup progress!. ***"
+    echo
+
+    if [ -n "$2" ]; then
+		echo -e "\t"$2
+    fi
+
+    if (( $1 == $E_PARAM_NOT_SET )); then
+		echo
+		echo
+		echo -e \
+			"\tSee README.conf in the ALBackup directory for information on"
+		echo -e "\thow to configure ALBackup."
+    fi
+
+    echo
+    exit $1
+}
+
+##############################################################################
+function Log()
+{
+    if (( "$LOG_LEVEL" >= "$1" )); then
+		echo "$(date "+$LOG_FORMAT") $LOG_HOSTNAME: $2" >> $LOG_FILE
+    fi
+}
+
+
+##############################################################################
+function CheckAppParam()
+{
+    local MSG=""
+
+    if [[ -n "$LOG_LEVEL" && $LOG_LEVEL > 0 ]]; then
+	if [[ -z "$LOG_FILE" || -d "$LOG_FILE" ]]; then
+	    ExitProg $E_PARAM_NOT_SET \
+		"Option 'LOG_FILE' not set or set to a none valid value: $LOG_FILE"
+	else
+	    touch $LOG_FILE &> $TONULL
+	    if [ $? -ne 0 ]; then
+			ExitProg $E_CREATE_FILE \
+				"Option 'LOG_FILE' is set to a none valid value or you\n\
+                $MSG\tdo not have write access to that file: $LOG_FILE"
+	    fi
+	fi
+
+	if [ -z "$LOG_FORMAT" ]; then
+	    ExitProg $E_PARAM_NOT_SET "Option 'LOG_FORMAT' not set!."
+	else
+	    $(date "+$LOG_FORMAT" &> $TONULL)
+	    if [ $? -ne 0 ]; then
+			ExitProg $E_PARAM_NOT_SET \
+				"Option 'LOG_FORMAT' are not in a valid format!."
+	    fi
+	fi
+
+	if [ -z "$LOG_HOSTNAME" ]; then
+	    ExitProg $E_PARAM_NOT_SET "Option 'LOG_HOSTNAME' is not set!."
+	fi
+    fi
+
+    if [ -z "$STORE_DATE_FORMAT" ]; then
+	ExitProg $E_PARAM_NOT_SET "Option 'STORE_DATE_FORMAT' not set!."
+    else
+	$(date "+$STORE_DATE_FORMAT" &> $TONULL)
+	if [ $? -ne 0 ]; then
+		    ExitProg $E_PARAM_NOT_SET \
+			    "Option 'STORE_DATE_FORMAT' are not in a valid format!."
+	fi
+    fi
+
+    if [[ -z "$TMP_DIR" || ! -d "$TMP_DIR" ]]; then
+		ExitProg $E_PARAM_NOT_SET "Option 'TMP_DIR' is not set!."
+    else
+		touch "$TMP_DIR/albackup-test" &> $TONULL
+	if [ $? -ne 0 ]; then
+	    ExitProg $E_CREATE_FILE \
+		"Option 'TMP_DIR' is set to a none valid value or you\n\
+	        $MSG\tdo not have write access to that directory: $TMP_DIR"
+	else
+	    rm "$TMP_DIR/albackup-test" &> $TONULL
+	fi
+    fi
+}
+
+##############################################################################
+function CheckParams()
+{
+    local RET=0
+    local MSG=""
+
+    if [ -z "$CLIENT" ]; then
+		MSG="$MSG\tOption 'CLIENT' not set!."
+		RET=1
+    fi
+    if [ -z "$BACKUP_DIRS" ]; then
+		MSG="$MSG\n\tOption 'BACKUP_DIRS' not set!."
+		RET=1
+    fi
+    if [ -z "$BASEDIR" ]; then
+		MSG="$MSG\n\tOption 'BASEDIR' not set !."
+		RET=1
+    fi
+    if [ -z "$BACKUP_EVERY" ]; then
+		MSG="$MSG\n\tOption 'BACKUP_EVERY' is not set or is set to a none \
+             valid value!"
+	RET=1
+    elif [[ "$BACKUP_EVERY" != "Day" && "$BACKUP_EVERY" != "EvenDay"
+		&& "$BACKUP_EVERY" != "OddDay" && "$BACKUP_EVERY" != "Week"
+		&& "$BACKUP_EVERY" != "EvenWeek"
+		&& "$BACKUP_EVERY" != "OddWeek" && "$BACKUP_EVERY" != "Month"
+		&& "$BACKUP_EVERY" != "EvenMonth"
+		&& "$BACKUP_EVERY" != "OddMonth" && "$BACKUP_EVERY" != "Year"
+		]]; then
+		MSG="$MSG\n\tOption 'BACKUP_EVERY' is set to a none valid value!."
+		RET=1
+    fi
+    if [[ -z "$BACKUP_DAY" && "$BACKUP_EVERY" != "Day" ]]; then
+		MSG="$MSG\n\tOption 'BACKUP_DAY' not set!."
+		RET=1
+    elif [ -n "$BACKUP_DAY" ]; then
+		if [[ "$BACKUP_DAY" < 0 && "$BACKUP_DAY" > 6 ]]; then
+			MSG="$MSG\n\tOption 'BACKUP_DAY' is set to a none valid value!."
+			RET=1
+	fi
+    fi
+
+    if (( $RET == 1 )); then
+		Log $L_NORMAL "$MSG"
+		ExitProg $E_PARAM_NOT_SET "$MSG"
+    fi
+}
+
+##############################################################################
+function CreateBackupDirs()
+{
+    local OK="OK"
+    local ERR="ERROR"
+    local MSG="Creating directory"
+    local ERRMSG="ERROR: Can't create directory"
+    local INPUT=""
+
+    if [ ! -d "$BASEDIR" ]; then
+	echo -n "$MSG $BASEDIR... "
+	mkdir "$BASEDIR" 2> $ALERR
+	if [ $? -ne 0 ]; then
+	    echo $ERR
+	    while read line; do
+			INPUT="$INPUT\n\t$line"
+			Log $L_NORMAL "$ERRMSG: '$BASEDIR' $line"
+	    done < $ALERR
+	    rm -f $ALERR &> $TONULL
+	    ExitProg $? "$ERRMSG: '$BASEDIR' $INPUT"
+	fi
+	echo $OK
+	Log $L_EXTENDED "$MSG: $BASEDIR...$OK"
+    fi
+
+    if [ ! -d "$BASEDIR/$CLIENT" ]; then
+		echo -n "$MSG $BASEDIR/$CLIENT... "
+		mkdir "$BASEDIR/$CLIENT" 2> $ALERR
+	if [ $? -ne 0 ]; then
+	    echo $ERR
+	    while read line; do
+			INPUT="$INPUT\n\t$line"
+			Log $L_NORMAL "$ERRMSG '$BASEDIR/$CLIENT' $line"
+	    done < $ALERR
+	    rm -f $ALERR &> $TONULL
+	    ExitProg $? "$ERRMSG: '$BASEDIR/$CLIENT' $INPUT"
+	fi
+	echo $OK
+	Log $L_EXTENDED "$MSG: $BASEDIR/$CLIENT...$OK"
+    fi
+
+    if [ ! -d "$BASEDIR/$CLIENT/current" ]; then
+		echo -n "$MSG $BASEDIR/$CLIENT/current... "
+		mkdir "$BASEDIR/$CLIENT/current" 2> $ALERR
+		if [ $? -ne 0 ]; then
+			echo $ERR
+			while real line; do
+				INPUT="$INPUT\n\t$line"
+				Log $L_NORMAL "$ERRMSG '$BASEDIR/$CLIENT/current' $line"
+			done < $ALERR
+			rm -f $ALERR 2> /dev/null
+			ExitProg $? "$ERRMSG: '$BASEDIR/$CLIENT/current' $INPUT"
+		fi
+		echo $OK
+		Log $L_EXTENDED "$MSG: $BASEDIR/$CLIENT/current...$OK"
+    fi
+}
+
+##############################################################################
+function BackupClientDir()
+{
+    local RET=0
+    local MSG="Backup $CLIENT:$1"
+    local ERRMSG="Backup ERROR:"
+    local INFOMSG="Backup INFO:"
+    local RPARAMS="--archive --force --ignore-errors --delete
+                   --delete-excluded --exclude="$EXCLUDES"
+                   --perms --owner --group --times
+                   --numeric-ids --no-whole-file
+                   --links
+                   --inplace
+                   --temp-dir=/tmp/ --compress --partial --rsh=ssh"
+
+    if [ "$CVS_EXCLUDE" == "Yes" ]; then
+    		RPARANS="$RPARAMS --cvs-exclude"
+    fi
+    if [ -e "$EXCLUDE_FILE" ]; then
+		RPARAMS="$RPARAMS --exclude-from=$EXCLUDE_FILE"
+    fi
+    if [ ! -z "$USE_HARDLINK" ]; then
+		RPARAMS="$RPARAMS --hard-links"
+    fi
+    if (( $LOG_LEVEL == $L_EXTREAM )); then
+		RPARAMS="$RPARAMS --verbose"
+    fi
+
+	if [ "$CLIENT" != "$CLIENT_IP" ]; then
+		Log $L_EXTENDED "Using IP: $CLIENT_IP ($CLIENT)"
+		echo "Using IP: $CLIENT_IP ($CLIENT)"
+	fi
+
+    echo -n "$MSG... "
+
+    rsync $RPARAMS $CLIENT_IP:$1 $BASEDIR/$CLIENT/current 2> $ALERR 1> $ALINFO
+    RET=$?
+    if (( $RET != 0 )); then
+	echo "ERROR"
+	if [ -s $ALERR ]; then
+	    while read line; do
+			echo "$ERRMSG $line"
+			Log $L_NORMAL "$ERRMSG $line"
+	    done < $ALERR
+	fi
+    else
+	echo "OK"
+	if [ -s $ALINFO ]; then
+	    while read line; do
+			echo "$INFOMSG $line"
+			Log $L_EXTREAM "$INFOMSG $line"
+	    done < $ALINFO
+	fi
+    fi
+    rm -f $ALERR $ALINFO &> $TONULL
+
+    return $RET
+}
+
+
+##############################################################################
+function RemoteExecStart()
+{
+    local RET=0
+
+    if [ ! -z "$EXEC_PRE" ]; then
+		echo -n "Remote exec (pre) START $CLIENT_IP -p 38456 $EXEC_PRE  ... "
+		Log $L_NORMAL "Remote exec (pre) START: $CLIENT '$EXEC_PRE'"
+
+		ssh $CLIENT_IP -p 38456 $EXEC_PRE 2> $ALERR 1> $ALINFO
+
+	if (( $? != 0 )); then
+	    echo "ERROR"
+	    if [ "$EXEC_ERROR_CONTINUE" != "Yes" ]; then
+			RET=1
+	    fi
+	    while read line; do
+			echo "Remote exec (pre) ERROR: $line"
+			Log $L_NORMAL "Remote exec (pre) ERROR: $line"
+	    done < $ALERR
+	    rm -f $ALERR &> $TONULL
+	else
+	    echo "OK"
+	    if [ -s $ALINFO ]; then
+			while read line; do
+				echo "Remote exec (pre) INFO: $line"
+				Log $L_EXTENDED "Remote exec (pre) INFO: $line"
+			done < $ALINFO
+	    fi
+	    rm -f $ALINFO &> $TONULL
+	fi
+	Log $L_NORMAL "Remote exec (pre) END: $CLIENT '$EXEC_PRE'"
+    fi
+
+    return $RET
+}
+
+##############################################################################
+function RemoteExecEnd()
+{
+    if [ ! -z "$EXEC_POST" ]; then
+		echo -n "Remote exec (post)... "
+		Log $L_NORMAL "Remote exec (post) START: $CLIENT '$EXEC_POST'"
+
+		ssh $CLIENT_IP $EXEC_POST 2> $ALERR 1> $ALINFO
+
+	if (( $? != 0 )); then
+	    echo "ERROR"
+	    while read line; do
+			echo "Remote exec (post) ERROR: $line"
+			Log $L_NORMAL "Remote exec (post) ERROR: $line"
+	    done < $ALERR
+	    rm -f $ALERR &> $TONULL
+	else
+	    echo "OK"
+	    if [ -s $ALINFO ]; then
+			while read line; do
+				echo "Remote exec (post) INFO: $line"
+				Log $L_EXTENDED "Remote exec (post) INFO: $line"
+			done < $ALINFO
+	    fi
+	    rm -f $ALINFO &> $TONULL
+	fi
+	Log $L_NORMAL "Remote exec (post) END: $CLIENT '$EXEC_POST'"
+    fi
+}
+
+##############################################################################
+function DoBackup()
+{
+    RemoteExecStart
+    if (( $? == 0 )); then
+		for d in ${BACKUP_DIRS[@]}; do
+			Log $L_NORMAL "Backup START: $CLIENT:$d"
+			BackupClientDir $d
+			Log $L_NORMAL "Backup END: $CLIENT:$d."
+		done
+		RemoteExecEnd
+    fi
+}
+
+##############################################################################
+function MoveToArchive()
+{
+    local SRC="$BASEDIR/$CLIENT/current"
+    local DST="$BASEDIR/$CLIENT/`date +$STORE_DATE_FORMAT`"
+    local FC=0
+
+    for f in $(ls -1 $BASEDIR/$CLIENT/current); do
+		((FC = FN + 1))
+    done
+
+    if (( $FC > 0 )); then
+		echo -n "Copying: $SRC TO $DST... "
+		Log $L_NORMAL "Copying START: src:$SRC dst:$DST"
+		cp -lrP $SRC $DST 2> $ALERR
+		if (( $? != 0 )); then
+			echo "ERROR"
+			if [ -s $ALERR ]; then
+				while read line; do
+					echo "Copy ERROR: $line"
+					Log $L_NORMAL "Copy ERROR: $line"
+				done < $ALERR
+			fi
+		else
+			echo "OK"
+		fi
+		Log $L_NORMAL "Copying END: src:$SRC dst:$DST"
+		rm -f $ALERR &> $TONULL
+    fi
+}
+
+##############################################################################
+function main()
+{
+    local STARTED=0
+    local DO_BACKUP=0
+
+    echo "ALBackup version $VERSION (See http://www.adilock.dk/~john)"
+    echo "Copyright (c) 2002-2003 John Mrck Hansen"
+    echo
+    echo "ALBackup may be copied only under the terms of the GNU General "
+    echo "Public License, a copy of which can be found with the ALBackup "
+    echo "distribution kit."
+    echo
+
+    if [ ! -d "$CONF_DIR" ]; then
+		ExitProg $E_FILE_NOT_FOUND \
+	    "No config file found!. Directory '$CONF_DIR' do not exist!."
+    fi
+
+    if [ ! -e "$CONF_FILE" ]; then
+		ExitProg $E_FILE_NOT_FOUND \
+	    "Config file '$CONF_FILE' do not exist!."
+    fi
+
+    . $CONF_FILE
+
+    CheckAppParam
+    ALERR="$TMP_DIR/albackup.err"
+    ALINFO="$TMP_DIR/albackup.info"
+
+    Log $L_NORMAL "*** BACKUP_SYSTEM_START ***"
+    STARTED=1
+
+    for cnf in $(ls "$CONF_DIR"/*.conf); do
+		echo
+		echo "Using config file: $cnf"
+		. $cnf
+		CheckParams
+
+		Log $L_EXTENDED "Using config file: $cnf"
+
+		if [ $CLIENT == "FromFile" ]; then
+			CLIENT=$(basename $cnf)
+			CLIENT=${CLIENT%.conf}
+		fi
+
+		if [ -z "$CLIENT_IP" ]; then
+			CLIENT_IP=$CLIENT
+		fi
+
+		CreateBackupDirs
+
+		if [ "$BACKUP_EVERY" == "Day" ]; then
+			DO_BACKUP=1
+		elif [[ "$BACKUP_EVERY" == "EvenDay" && $EVENDAY != 0 ]]; then
+			DO_BACKUP=1
+		elif [[ "$BACKUP_EVERY" == "OddDay" && $EVENDAY == 0 ]]; then
+			DO_BACKUP=1
+		elif [ "$BACKUP_EVERY" == "Week" ]; then
+			DO_BACKUP=1
+		elif [[ "$BACKUP_EVERY" == "EvenWeek" && $EVENWEEK != 0 ]]; then
+			DO_BACKUP=1
+		elif [[ "$BACKUP_EVERY" == "OddWeek" && $EVENWEEK == 0 ]]; then
+			DO_BACKUP=1
+		elif [ "$BACKUP_EVERY" == "Month" ]; then
+			DO_BACKUP=1
+		elif [[ "$BACKUP_EVERY" == "EvenMonth" && $EVENMONTH != 0 ]]; then
+			DO_BACKUP=1
+		elif [[ "$BACKUP_EVERY" == "OddMonth" && $EVENMONTH == 0 ]]; then
+			DO_BACKUP=1
+		elif [[ "$BACKUP_EVERY" == "Year" ]]; then
+			if (( $DAYOFYEAR < 8 && $BACKUP_DAY == $DAYOFWEEK  )); then
+				DO_BACKUP=1
+			fi
+		fi
+
+		if (( $DO_BACKUP != 0 )); then
+			DoBackup
+			MoveToArchive
+		else
+			Log $L_EXTENDED "Nothing to be done this time!."
+		fi
+    done
+
+    if (( $STARTED == 1 )); then
+		Log $L_NORMAL "*** BACKUP_SYSTEM_END ***"
+    fi
+
+    echo
+    return 0
+}
+
+##############################################################################
+main
+exit $?
