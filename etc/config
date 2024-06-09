@@ -1,0 +1,67 @@
+# VERSION: 0.5.0
+
+##############################################################################
+# LOG_LEVEL: 0 | 1 | 2 | 3
+#
+# Logfring over krsel af backup programmet.
+#
+# 0	Ingen logfring. Alt logfring vil blive skrevet til sk�men.
+#
+# 1	Informationer s�om Start/slut af backupbrogrammet samt
+#	start/slut af hver mappe der tages backup af p�klient + evt. fejl.
+#
+# 2	Samme som ved (1) + oprettelser mapper, flytning/sletning af
+#	date, samt hvilken konfigurerings fil der bliver brugt ved
+#	backup af klienten.
+#
+# 3	Samme som ved (2) + liste over alle filer der bliver kopieret
+#	over netv�ket m.v.
+#
+# F.eks. LOG_LEVEL="1"
+##############################################################################
+
+LOG_LEVEL="2"
+
+##############################################################################
+# LOG_FILE: fuld sti (PATH) til log.
+#
+# Denne fil vil indeholde evt. fejl samt andre informationer. Se LOG_LEVEL.
+#
+# F.eks. LOG_FILE="/var/log/albackup.log"
+##############################################################################
+
+LOG_FILE="/var/log/albackup.log"
+
+##############################################################################
+# LOG_FORMAL: dato & tid format
+#
+# Denne indstilling har samme format som kommandoen 'date'. Men uden
+# plus (+).
+#
+# F.eks. LOF_FORMAT="%b%e %H:%M:%S"
+##############################################################################
+
+LOG_FORMAT="%b%e %H:%M:%S"
+
+##############################################################################
+# LOG_HOSTNAME: hostname format.
+#
+# Flgende formater er mulige (udgangspunkt: myclient.mydomain.com):
+#
+# ${HOSTNAME}     == myclient.mydomain.com
+# ${HOSTNAME%.*}  == myclient.mydomain
+# ${HOSTNAME%%.*} == myclient
+#
+# Standart: LOG_HOST="${HOSTNAME%%.*}"
+##############################################################################
+
+LOG_HOSTNAME="${HOSTNAME%%.*}"
+
+##############################################################################
+# TMP_DIR: Fuld sti (PATH) til mappen.
+#
+# Mappe til midlertidige filer.
+#
+##############################################################################
+
+TMP_DIR="/tmp"
